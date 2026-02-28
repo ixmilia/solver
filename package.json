@@ -3,17 +3,27 @@
   "version": "0.1.0",
   "description": "",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsgo",
+    "bundle": "esbuild dist/index.js --bundle --format=esm --outfile=dist/solver.bundle.js",
+    "publish": "npm run build && npm run bundle && node scripts/publish.js",
+    "serve": "npx serve www",
     "test": "vitest run"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
     "@types/node": "^25.3.2",
     "@typescript/native-preview": "^7.0.0-dev.20260227.1",
+    "esbuild": "^0.27.3",
     "vitest": "^4.0.18"
   }
 }
