@@ -1,0 +1,19 @@
+{
+  "name": "solver",
+  "version": "0.1.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsgo",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.3.2",
+    "@typescript/native-preview": "^7.0.0-dev.20260227.1",
+    "vitest": "^4.0.18"
+  }
+}
