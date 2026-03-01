@@ -20,8 +20,11 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build
-
-      - run: npm run bundle
+      - run: npm run publish
 
       - run: npm test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wwwroot
+          path: www
