@@ -144,6 +144,11 @@ export class Viewport {
             this.selectPrimitive(null);
             this.draw();
         });
+
+        // Export DXF button
+        document.getElementById("export-dxf")?.addEventListener("click", () => {
+            this.exportDxf();
+        });
     }
 
     /** Adjust the viewport so all Point2 primitives are visible, with some padding. */
@@ -929,6 +934,49 @@ export class Viewport {
         this.drawCursorLabel(ctx);
         this.drawStatusMessage(ctx);
         this.drawSolvedIndicator(ctx);
+        this.updateExportButton();
+    }
+
+    /** Update the Export DXF button's enabled state. */
+    private updateExportButton(): void {
+        const btn = document.getElementById("export-dxf") as HTMLButtonElement | null;
+        if (!btn) return;
+        let hasLine = false;
+        for (const prim of this.sketch.getPrimitives()) {
+            if (prim instanceof Line) { hasLine = true; break; }
+        }
+        btn.disabled = !(this.isSolved && hasLine);
+    }
+
+    /** Generate a minimal DXF file of all Line primitives and trigger a download. */
+    private exportDxf(): void {
+        const lines: Line[] = [];
+        for (const prim of this.sketch.getPrimitives()) {
+            if (prim instanceof Line) lines.push(prim);
+        }
+        if (lines.length === 0) return;
+
+        let dxf = "";
+        dxf += "0\nSECTION\n2\nENTITIES\n";
+        for (const line of lines) {
+            dxf += "0\nLINE\n";
+            dxf += "8\n0\n";           // layer 0
+            dxf += `10\n${line.start.x}\n`;  // start x
+            dxf += `20\n${line.start.y}\n`;  // start y
+            dxf += `30\n0\n`;                // start z
+            dxf += `11\n${line.end.x}\n`;    // end x
+            dxf += `21\n${line.end.y}\n`;    // end y
+            dxf += `31\n0\n`;                // end z
+        }
+        dxf += "0\nENDSEC\n0\nEOF\n";
+
+        const blob = new Blob([dxf], { type: "application/dxf" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sketch.dxf";
+        a.click();
+        URL.revokeObjectURL(url);
     }
 
     /** Draw a persistent solved/unsolved indicator in the top-right corner. */

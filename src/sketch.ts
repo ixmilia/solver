@@ -69,6 +69,24 @@ export class Sketch {
         return this.primitives.values();
     }
 
+    /** Returns an iterator over all [id, primitive] entries. */
+    getPrimitiveEntries(): IterableIterator<[number, PrimitiveLike]> {
+        return this.primitives.entries();
+    }
+
+    /** Returns the id assigned to the given primitive, or undefined if not found. */
+    getPrimitiveId(primitive: PrimitiveLike): number | undefined {
+        for (const [id, p] of this.primitives) {
+            if (p === primitive) return id;
+        }
+        return undefined;
+    }
+
+    /** Returns all registered constraints. */
+    getConstraints(): ReadonlyArray<ConstraintLike> {
+        return this.constraints;
+    }
+
     /** Total number of scalar degrees of freedom across all primitives. */
     getNDofs(): number {
         let n = 0;

@@ -55,6 +55,17 @@
             color: #fff;
         }
 
+        #toolbar button:disabled {
+            background: #1e1e1e;
+            color: #555;
+            border-color: #333;
+            cursor: not-allowed;
+        }
+
+        #toolbar button:disabled:hover {
+            background: #1e1e1e;
+        }
+
         #properties-panel {
             position: absolute;
             top: 46px;
@@ -122,6 +133,7 @@
         <button id="tool-line" data-tool="line">Line</button>
         <button id="fit-all">Zoom Extents</button>
         <button id="solve">Solve</button>
+        <button id="export-dxf" disabled>Download DXF</button>
         <button id="clear">Clear</button>
     </div>
     <div id="properties-panel"></div>

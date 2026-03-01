@@ -17,6 +17,13 @@ export { HorizontalLine } from "./constraints/horizontal_line.js";
 export { VerticalLine } from "./constraints/vertical_line.js";
 export { HorizontalDistanceBetweenPoints } from "./constraints/horizontal_distance.js";
 export { VerticalDistanceBetweenPoints } from "./constraints/vertical_distance.js";
+export {
+    serializeSketch,
+    serializeSketchToString,
+    deserializeSketch,
+    deserializeSketchFromString,
+} from "./sketch_serializer.js";
+export type { SketchJson, PrimitiveJson, ConstraintJson } from "./sketch_serializer.js";
 export { Viewport } from "./viewport.js";
 
 import { Viewport } from "./viewport.js";
