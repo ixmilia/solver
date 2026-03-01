@@ -2,9 +2,22 @@ import { Sketch } from "./sketch.js";
 import { PrimitiveLike } from "./interfaces.js";
 import { Point2 } from "./primitives/point2.js";
 import { Line } from "./primitives/line.js";
+import { FixPoint } from "./constraints/fix_point.js";
+import { HorizontalLine } from "./constraints/horizontal_line.js";
+import { VerticalLine } from "./constraints/vertical_line.js";
+import { HorizontalDistanceBetweenPoints } from "./constraints/horizontal_distance.js";
+import { VerticalDistanceBetweenPoints } from "./constraints/vertical_distance.js";
+import { GradientBasedSolver } from "./gradient_based_solver.js";
 
 /** The tools available in the toolbar. */
 export type Tool = "none" | "point" | "line";
+
+/** Pending two-point constraint awaiting second point selection. */
+type PendingDistanceConstraint = {
+    kind: "horizontal-distance" | "vertical-distance";
+    sourcePoint: Point2;
+    desiredDistance: number;
+};
 
 /**
  * A viewport for mapping world coordinates to a canvas.
@@ -51,6 +64,16 @@ export class Viewport {
     private panLastX = 0;
     private panLastY = 0;
 
+    /** Transient status message drawn at the bottom of the canvas. */
+    private statusMessage: string | null = null;
+    private statusTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** Whether the current sketch state has been solved. */
+    private isSolved = false;
+
+    /** Pending two-point constraint awaiting a second point click. */
+    private pendingConstraint: PendingDistanceConstraint | null = null;
+
     constructor(canvas: HTMLCanvasElement, bottomLeftX = -10, bottomLeftY = -10, viewHeight = 20) {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d")!;
@@ -96,6 +119,31 @@ export class Viewport {
 
         // Fit-all button
         document.getElementById("fit-all")?.addEventListener("click", () => this.zoomToFit());
+
+        // Solve button
+        document.getElementById("solve")?.addEventListener("click", () => {
+            const solver = new GradientBasedSolver();
+            const start = performance.now();
+            solver.solve(this.sketch);
+            const elapsed = performance.now() - start;
+            this.isSolved = true;
+            this.showStatus(`Solved in ${elapsed.toFixed(1)} ms`);
+            this.updatePropertiesPanel();
+            this.draw();
+        });
+
+        // Clear button
+        document.getElementById("clear")?.addEventListener("click", () => {
+            this.sketch = new Sketch();
+            this.pendingLineStart = null;
+            this.pendingConstraint = null;
+            this.isSolved = false;
+            this.bottomLeftX = -10;
+            this.bottomLeftY = -10;
+            this.viewHeight = 20;
+            this.selectPrimitive(null);
+            this.draw();
+        });
     }
 
     /** Adjust the viewport so all Point2 primitives are visible, with some padding. */
@@ -146,6 +194,7 @@ export class Viewport {
     /** Cancel any in-progress placement and reset the active tool. */
     private cancelTool(): void {
         this.pendingLineStart = null;
+        this.pendingConstraint = null;
         this.activeTool = "none";
         this.canvas.style.cursor = "default";
         document.querySelectorAll<HTMLButtonElement>("#toolbar button[data-tool]")
@@ -164,7 +213,11 @@ export class Viewport {
     /** Handle keydown — ESC cancels current placement or deselects. */
     private onKeyDown(e: KeyboardEvent): void {
         if (e.key === "Escape") {
-            if (this.activeTool !== "none") {
+            if (this.pendingConstraint) {
+                this.pendingConstraint = null;
+                this.updatePropertiesPanel();
+                this.draw();
+            } else if (this.activeTool !== "none") {
                 this.cancelTool();
             } else if (this.selectedPrimitive) {
                 this.selectPrimitive(null);
@@ -205,6 +258,27 @@ export class Viewport {
 
         // If no tool is active, try to select a primitive
         if (this.activeTool === "none") {
+            // If awaiting second point for a distance constraint, handle that first
+            if (this.pendingConstraint) {
+                const hitPoint = this.findNearestPoint(cx, cy);
+                if (hitPoint && hitPoint !== this.pendingConstraint.sourcePoint) {
+                    const { kind, sourcePoint, desiredDistance } = this.pendingConstraint;
+                    if (kind === "horizontal-distance") {
+                        this.sketch.addConstraint(
+                            new HorizontalDistanceBetweenPoints(sourcePoint, hitPoint, desiredDistance)
+                        );
+                    } else {
+                        this.sketch.addConstraint(
+                            new VerticalDistanceBetweenPoints(sourcePoint, hitPoint, desiredDistance)
+                        );
+                    }
+                    this.isSolved = false;
+                    this.pendingConstraint = null;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                }
+                return;
+            }
             const hit = this.findNearestPrimitive(cx, cy);
             this.selectPrimitive(hit);
             this.draw();
@@ -214,6 +288,7 @@ export class Viewport {
         if (this.activeTool === "point") {
             const p = new Point2(wx, wy);
             this.sketch.addPrimitive(p);
+            this.isSolved = false;
             this.cancelTool();
             return;
         }
@@ -231,6 +306,7 @@ export class Viewport {
                 if (hitPoint !== this.pendingLineStart) {
                     const line = new Line(this.pendingLineStart, hitPoint);
                     this.sketch.addPrimitive(line);
+                    this.isSolved = false;
                 }
                 this.cancelTool();
             }
@@ -346,7 +422,7 @@ export class Viewport {
         xInput.value = point.x.toString();
         xInput.addEventListener("input", () => {
             const v = parseFloat(xInput.value);
-            if (!isNaN(v)) { point.x = v; this.draw(); }
+            if (!isNaN(v)) { point.x = v; this.isSolved = false; this.draw(); }
         });
         xLabel.appendChild(xInput);
         panel.appendChild(xLabel);
@@ -360,10 +436,237 @@ export class Viewport {
         yInput.value = point.y.toString();
         yInput.addEventListener("input", () => {
             const v = parseFloat(yInput.value);
-            if (!isNaN(v)) { point.y = v; this.draw(); }
+            if (!isNaN(v)) { point.y = v; this.isSolved = false; this.draw(); }
         });
         yLabel.appendChild(yInput);
         panel.appendChild(yLabel);
+
+        // Constraints section
+        const constraints = this.sketch.getConstraintsOnPrimitive(point);
+        const existingFixPoint = constraints.find((c): c is FixPoint => c instanceof FixPoint) ?? null;
+
+        if (constraints.length > 0) {
+            const section = document.createElement("div");
+            section.className = "prop-constraints";
+            const heading = document.createElement("div");
+            heading.className = "prop-subtitle";
+            heading.textContent = `Constraints (${constraints.length})`;
+            section.appendChild(heading);
+            const list = document.createElement("ul");
+            for (const c of constraints) {
+                const li = document.createElement("li");
+                li.textContent = c.description;
+                list.appendChild(li);
+            }
+            section.appendChild(list);
+            panel.appendChild(section);
+        }
+
+        if (existingFixPoint) {
+            // Edit / delete existing FixPoint
+            const editSection = document.createElement("div");
+            editSection.className = "prop-add-constraint";
+            const editHeading = document.createElement("div");
+            editHeading.className = "prop-subtitle";
+            editHeading.textContent = "Edit FixPoint";
+            editSection.appendChild(editHeading);
+
+            const txLabel = document.createElement("label");
+            txLabel.textContent = "tx: ";
+            const txInput = document.createElement("input");
+            txInput.type = "number";
+            txInput.step = "0.1";
+            txInput.value = existingFixPoint.tx.toString();
+            txInput.addEventListener("input", () => {
+                const v = parseFloat(txInput.value);
+                if (!isNaN(v)) {
+                    existingFixPoint.tx = v;
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                }
+            });
+            txLabel.appendChild(txInput);
+            editSection.appendChild(txLabel);
+
+            const tyLabel = document.createElement("label");
+            tyLabel.textContent = "ty: ";
+            const tyInput = document.createElement("input");
+            tyInput.type = "number";
+            tyInput.step = "0.1";
+            tyInput.value = existingFixPoint.ty.toString();
+            tyInput.addEventListener("input", () => {
+                const v = parseFloat(tyInput.value);
+                if (!isNaN(v)) {
+                    existingFixPoint.ty = v;
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                }
+            });
+            tyLabel.appendChild(tyInput);
+            editSection.appendChild(tyLabel);
+
+            const deleteBtn = document.createElement("button");
+            deleteBtn.textContent = "Delete FixPoint";
+            deleteBtn.addEventListener("click", () => {
+                this.sketch.removeConstraint(existingFixPoint);
+                this.isSolved = false;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            editSection.appendChild(deleteBtn);
+            panel.appendChild(editSection);
+        } else {
+            // Add new FixPoint
+            const addSection = document.createElement("div");
+            addSection.className = "prop-add-constraint";
+            const addHeading = document.createElement("div");
+            addHeading.className = "prop-subtitle";
+            addHeading.textContent = "Add Constraint";
+            addSection.appendChild(addHeading);
+
+            const txLabel = document.createElement("label");
+            txLabel.textContent = "tx: ";
+            const txInput = document.createElement("input");
+            txInput.type = "number";
+            txInput.step = "0.1";
+            txInput.value = point.x.toString();
+            txLabel.appendChild(txInput);
+            addSection.appendChild(txLabel);
+
+            const tyLabel = document.createElement("label");
+            tyLabel.textContent = "ty: ";
+            const tyInput = document.createElement("input");
+            tyInput.type = "number";
+            tyInput.step = "0.1";
+            tyInput.value = point.y.toString();
+            tyLabel.appendChild(tyInput);
+            addSection.appendChild(tyLabel);
+
+            const addBtn = document.createElement("button");
+            addBtn.textContent = "Add FixPoint";
+            addBtn.addEventListener("click", () => {
+                const tx = parseFloat(txInput.value);
+                const ty = parseFloat(tyInput.value);
+                if (isNaN(tx) || isNaN(ty)) return;
+                const constraint = new FixPoint(point, tx, ty);
+                this.sketch.addConstraint(constraint);
+                this.isSolved = false;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            addSection.appendChild(addBtn);
+            panel.appendChild(addSection);
+        }
+
+        // Distance constraints section
+        const distConstraints = constraints.filter(
+            (c): c is HorizontalDistanceBetweenPoints | VerticalDistanceBetweenPoints =>
+                c instanceof HorizontalDistanceBetweenPoints || c instanceof VerticalDistanceBetweenPoints
+        );
+
+        if (distConstraints.length > 0) {
+            const section = document.createElement("div");
+            section.className = "prop-add-constraint";
+            const heading = document.createElement("div");
+            heading.className = "prop-subtitle";
+            heading.textContent = "Distance Constraints";
+            section.appendChild(heading);
+
+            for (const dc of distConstraints) {
+                const row = document.createElement("div");
+                row.style.display = "flex";
+                row.style.alignItems = "center";
+                row.style.gap = "4px";
+                row.style.marginBottom = "4px";
+                const label = document.createElement("span");
+                label.textContent = dc.description;
+                label.style.flex = "1";
+                row.appendChild(label);
+                const delBtn = document.createElement("button");
+                delBtn.textContent = "Delete";
+                delBtn.addEventListener("click", () => {
+                    this.sketch.removeConstraint(dc);
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                row.appendChild(delBtn);
+                section.appendChild(row);
+            }
+            panel.appendChild(section);
+        }
+
+        // Add distance constraint section
+        if (this.pendingConstraint) {
+            const pendingSection = document.createElement("div");
+            pendingSection.className = "prop-add-constraint";
+            const pendingLabel = document.createElement("div");
+            pendingLabel.className = "prop-subtitle";
+            pendingLabel.textContent = this.pendingConstraint.kind === "horizontal-distance"
+                ? "Select second point for HorizontalDistance"
+                : "Select second point for VerticalDistance";
+            pendingSection.appendChild(pendingLabel);
+            const cancelBtn = document.createElement("button");
+            cancelBtn.textContent = "Cancel";
+            cancelBtn.addEventListener("click", () => {
+                this.pendingConstraint = null;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            pendingSection.appendChild(cancelBtn);
+            panel.appendChild(pendingSection);
+        } else {
+            const addDistSection = document.createElement("div");
+            addDistSection.className = "prop-add-constraint";
+            const addDistHeading = document.createElement("div");
+            addDistHeading.className = "prop-subtitle";
+            addDistHeading.textContent = "Add Distance Constraint";
+            addDistSection.appendChild(addDistHeading);
+
+            const distLabel = document.createElement("label");
+            distLabel.textContent = "distance: ";
+            const distInput = document.createElement("input");
+            distInput.type = "number";
+            distInput.step = "0.1";
+            distInput.value = "0";
+            distLabel.appendChild(distInput);
+            addDistSection.appendChild(distLabel);
+
+            const addHDistBtn = document.createElement("button");
+            addHDistBtn.textContent = "Add HorizontalDistance";
+            addHDistBtn.addEventListener("click", () => {
+                const d = parseFloat(distInput.value);
+                if (isNaN(d)) return;
+                this.pendingConstraint = {
+                    kind: "horizontal-distance",
+                    sourcePoint: point,
+                    desiredDistance: d,
+                };
+                this.canvas.style.cursor = "crosshair";
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            addDistSection.appendChild(addHDistBtn);
+
+            const addVDistBtn = document.createElement("button");
+            addVDistBtn.textContent = "Add VerticalDistance";
+            addVDistBtn.addEventListener("click", () => {
+                const d = parseFloat(distInput.value);
+                if (isNaN(d)) return;
+                this.pendingConstraint = {
+                    kind: "vertical-distance",
+                    sourcePoint: point,
+                    desiredDistance: d,
+                };
+                this.canvas.style.cursor = "crosshair";
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            addDistSection.appendChild(addVDistBtn);
+            panel.appendChild(addDistSection);
+        }
 
         // Delete button
         this.appendDeleteButton(panel, point);
@@ -381,6 +684,74 @@ export class Viewport {
         info.style.marginBottom = "4px";
         panel.appendChild(info);
 
+        // Check for existing HorizontalLine / VerticalLine constraint
+        const constraints = this.sketch.getConstraintsOnPrimitive(line);
+        const existingH = constraints.find((c): c is HorizontalLine => c instanceof HorizontalLine) ?? null;
+        const existingV = constraints.find((c): c is VerticalLine => c instanceof VerticalLine) ?? null;
+        const existingDirectional = existingH ?? existingV;
+
+        if (constraints.length > 0) {
+            const section = document.createElement("div");
+            section.className = "prop-constraints";
+            const heading = document.createElement("div");
+            heading.className = "prop-subtitle";
+            heading.textContent = `Constraints (${constraints.length})`;
+            section.appendChild(heading);
+            const list = document.createElement("ul");
+            for (const c of constraints) {
+                const li = document.createElement("li");
+                li.textContent = c.description;
+                list.appendChild(li);
+            }
+            section.appendChild(list);
+            panel.appendChild(section);
+        }
+
+        if (existingDirectional) {
+            // Allow deleting the existing constraint
+            const section = document.createElement("div");
+            section.className = "prop-add-constraint";
+            const deleteBtn = document.createElement("button");
+            deleteBtn.textContent = `Delete ${existingDirectional.description}`;
+            deleteBtn.addEventListener("click", () => {
+                this.sketch.removeConstraint(existingDirectional);
+                this.isSolved = false;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            section.appendChild(deleteBtn);
+            panel.appendChild(section);
+        } else {
+            // Allow adding HorizontalLine or VerticalLine
+            const section = document.createElement("div");
+            section.className = "prop-add-constraint";
+            const heading = document.createElement("div");
+            heading.className = "prop-subtitle";
+            heading.textContent = "Add Constraint";
+            section.appendChild(heading);
+
+            const addHBtn = document.createElement("button");
+            addHBtn.textContent = "Add HorizontalLine";
+            addHBtn.addEventListener("click", () => {
+                this.sketch.addConstraint(new HorizontalLine(line));
+                this.isSolved = false;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            section.appendChild(addHBtn);
+
+            const addVBtn = document.createElement("button");
+            addVBtn.textContent = "Add VerticalLine";
+            addVBtn.addEventListener("click", () => {
+                this.sketch.addConstraint(new VerticalLine(line));
+                this.isSolved = false;
+                this.updatePropertiesPanel();
+                this.draw();
+            });
+            section.appendChild(addVBtn);
+            panel.appendChild(section);
+        }
+
         // Delete button
         this.appendDeleteButton(panel, line);
     }
@@ -395,22 +766,35 @@ export class Viewport {
         panel.appendChild(btn);
     }
 
-    /** Delete a primitive from the sketch. If it's a point, warn about dependent lines first. */
+    /** Delete a primitive from the sketch. If it's a point, warn about dependent lines and constraints first. */
     private deletePrimitive(prim: PrimitiveLike): void {
         if (prim instanceof Point2) {
             const deps = this.sketch.getDependents(prim);
+            const distConstraints = this.sketch.getConstraintsOnPrimitive(prim).filter(
+                c => c instanceof HorizontalDistanceBetweenPoints || c instanceof VerticalDistanceBetweenPoints
+            );
+            const warnings: string[] = [];
             if (deps.length > 0) {
+                warnings.push(`${deps.length} line(s)`);
+            }
+            if (distConstraints.length > 0) {
+                warnings.push(`${distConstraints.length} distance constraint(s)`);
+            }
+            if (warnings.length > 0) {
                 const ok = window.confirm(
-                    `This point is used by ${deps.length} line(s). Deleting it will also delete those lines. Continue?`
+                    `This point is used by ${warnings.join(" and ")}. Deleting it will also delete those. Continue?`
                 );
                 if (!ok) return;
-                // Remove dependents first
                 for (const dep of deps) {
                     this.sketch.removePrimitive(dep);
+                }
+                for (const dc of distConstraints) {
+                    this.sketch.removeConstraint(dc);
                 }
             }
         }
         this.sketch.removePrimitive(prim);
+        this.isSolved = false;
         this.selectPrimitive(null);
         this.draw();
     }
@@ -543,6 +927,34 @@ export class Viewport {
         this.drawAxisLabels(ctx);
         this.drawPrimitives(ctx);
         this.drawCursorLabel(ctx);
+        this.drawStatusMessage(ctx);
+        this.drawSolvedIndicator(ctx);
+    }
+
+    /** Draw a persistent solved/unsolved indicator in the top-right corner. */
+    private drawSolvedIndicator(ctx: CanvasRenderingContext2D): void {
+        const dpr = window.devicePixelRatio || 1;
+        const fontSize = 12 * dpr;
+        const pad = 6 * dpr;
+        const label = this.isSolved ? "Solved" : "Unsolved";
+
+        ctx.font = `${fontSize}px monospace`;
+        const metrics = ctx.measureText(label);
+        const textW = metrics.width;
+        const textH = fontSize;
+
+        const x = this.canvas.width - textW - pad * 2;
+        const y = pad;
+
+        // Background pill
+        ctx.fillStyle = "rgba(30, 30, 30, 0.85)";
+        ctx.fillRect(x, y, textW + pad * 2, textH + pad * 2);
+
+        // Text
+        ctx.fillStyle = this.isSolved ? "#66bb6a" : "#888";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(label, x + pad, y + pad);
     }
 
     /** Draw a subtle reference grid. */
@@ -715,6 +1127,46 @@ export class Viewport {
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
         ctx.fillText(label, lx, ly);
+    }
+
+    /** Show a transient status message at the bottom of the canvas for a few seconds. */
+    private showStatus(message: string, durationMs = 3000): void {
+        if (this.statusTimer !== null) {
+            clearTimeout(this.statusTimer);
+        }
+        this.statusMessage = message;
+        this.statusTimer = setTimeout(() => {
+            this.statusMessage = null;
+            this.statusTimer = null;
+            this.draw();
+        }, durationMs);
+    }
+
+    /** Draw the status message centred at the bottom of the canvas. */
+    private drawStatusMessage(ctx: CanvasRenderingContext2D): void {
+        if (!this.statusMessage) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const fontSize = 14 * dpr;
+        const pad = 6 * dpr;
+
+        ctx.font = `${fontSize}px monospace`;
+        const metrics = ctx.measureText(this.statusMessage);
+        const textW = metrics.width;
+        const textH = fontSize;
+
+        const cx = this.canvas.width / 2;
+        const by = this.canvas.height - pad * 2;
+
+        // Background pill
+        ctx.fillStyle = "rgba(30, 30, 30, 0.85)";
+        ctx.fillRect(cx - textW / 2 - pad, by - textH - pad, textW + pad * 2, textH + pad * 2);
+
+        // Text
+        ctx.fillStyle = "#4fc3f7";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(this.statusMessage, cx, by);
     }
 
     /** Draw all placed primitives. */

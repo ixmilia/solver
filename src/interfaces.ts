@@ -33,4 +33,10 @@ export interface ConstraintLike {
      * to the referenced primitives' gradient accumulators.
      */
     updateGradient(): void;
+
+    /** Returns a short human-readable description of this constraint. */
+    readonly description: string;
+
+    /** Returns the primitives directly referenced by this constraint. */
+    getReferencedPrimitives(): PrimitiveLike[];
 }

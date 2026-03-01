@@ -47,6 +47,23 @@ export class Sketch {
         this.constraints.push(constraint);
     }
 
+    /** Remove a constraint by reference. Returns true if found and removed. */
+    removeConstraint(constraint: ConstraintLike): boolean {
+        const idx = this.constraints.indexOf(constraint);
+        if (idx >= 0) {
+            this.constraints.splice(idx, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /** Returns all constraints that directly reference the given primitive. */
+    getConstraintsOnPrimitive(primitive: PrimitiveLike): ConstraintLike[] {
+        return this.constraints.filter(c =>
+            c.getReferencedPrimitives().includes(primitive)
+        );
+    }
+
     /** Returns an iterator over all registered primitives. */
     getPrimitives(): IterableIterator<PrimitiveLike> {
         return this.primitives.values();
