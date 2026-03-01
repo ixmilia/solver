@@ -151,6 +151,11 @@ export class Viewport {
             this.exportDxf();
         });
 
+        // Copy JSON button
+        document.getElementById("copy-json")?.addEventListener("click", () => {
+            this.copyJsonToClipboard();
+        });
+
         // Save sketch button
         document.getElementById("save-sketch")?.addEventListener("click", () => {
             this.saveSketch();
@@ -1030,15 +1035,17 @@ export class Viewport {
         this.updateExportButton();
     }
 
-    /** Update the Export DXF button's enabled state. */
+    /** Update the Export DXF and Copy JSON buttons' enabled state. */
     private updateExportButton(): void {
-        const btn = document.getElementById("export-dxf") as HTMLButtonElement | null;
-        if (!btn) return;
         let hasLine = false;
         for (const prim of this.sketch.getPrimitives()) {
             if (prim instanceof Line) { hasLine = true; break; }
         }
-        btn.disabled = !(this.isSolved && hasLine);
+        const enabled = this.isSolved && hasLine;
+        const dxfBtn = document.getElementById("export-dxf") as HTMLButtonElement | null;
+        if (dxfBtn) dxfBtn.disabled = !enabled;
+        const jsonBtn = document.getElementById("copy-json") as HTMLButtonElement | null;
+        if (jsonBtn) jsonBtn.disabled = !enabled;
     }
 
     /** Generate a minimal DXF file of all Line primitives and trigger a download. */
@@ -1070,6 +1077,47 @@ export class Viewport {
         a.download = "sketch.dxf";
         a.click();
         URL.revokeObjectURL(url);
+    }
+
+    /** Build a BCad-compatible JSON string from all Line primitives. */
+    private buildBCadJson(): string {
+        const lines: Line[] = [];
+        for (const prim of this.sketch.getPrimitives()) {
+            if (prim instanceof Line) lines.push(prim);
+        }
+
+        const entities = lines.map((line) => ({
+            t: "L",
+            h: null,
+            p: null,
+            l: "0",
+            d: `${line.start.x},${line.start.y},0|${line.end.x},${line.end.y},0`,
+        }));
+
+        const obj = {
+            floorplan: {
+                bnds: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
+                lyrs: [{ n: "0", r: 0, g: 0, b: 0 }],
+                blks: [
+                    {
+                        n: "*Model_Space",
+                        h: null,
+                        ents: entities,
+                    },
+                ],
+            },
+        };
+
+        return JSON.stringify(obj);
+    }
+
+    /** Copy the BCad-compatible JSON to the clipboard. */
+    private copyJsonToClipboard(): void {
+        const json = this.buildBCadJson();
+        navigator.clipboard.writeText(json).then(
+            () => this.showStatus("JSON copied to clipboard"),
+            (err) => this.showStatus(`Copy failed: ${err}`),
+        );
     }
 
     /** Serialize the current sketch to JSON and trigger a file download. */
