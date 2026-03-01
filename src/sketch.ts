@@ -16,8 +16,40 @@ export class Sketch {
         return id;
     }
 
+    /** Remove a primitive by reference. Returns true if found and removed. */
+    removePrimitive(primitive: PrimitiveLike): boolean {
+        for (const [id, p] of this.primitives) {
+            if (p === primitive) {
+                this.primitives.delete(id);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Find all primitives that directly depend on the given primitive.
+     * For example, Lines that reference a Point2 as start or end.
+     */
+    getDependents(primitive: PrimitiveLike): PrimitiveLike[] {
+        const deps: PrimitiveLike[] = [];
+        for (const p of this.primitives.values()) {
+            // Check if p has start/end references matching the target
+            const any = p as any;
+            if (any.start === primitive || any.end === primitive || any.center === primitive) {
+                deps.push(p);
+            }
+        }
+        return deps;
+    }
+
     addConstraint(constraint: ConstraintLike): void {
         this.constraints.push(constraint);
+    }
+
+    /** Returns an iterator over all registered primitives. */
+    getPrimitives(): IterableIterator<PrimitiveLike> {
+        return this.primitives.values();
     }
 
     /** Total number of scalar degrees of freedom across all primitives. */

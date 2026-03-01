@@ -4,12 +4,129 @@
 <head>
     <meta charset="UTF-8">
     <title>Solver</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1e1e1e;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 4px;
+            z-index: 10;
+        }
+
+        #toolbar button {
+            padding: 6px 12px;
+            background: #2d2d2d;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 13px;
+        }
+
+        #toolbar button:hover {
+            background: #3a3a3a;
+        }
+
+        #toolbar button.active {
+            background: #094771;
+            border-color: #1177bb;
+            color: #fff;
+        }
+
+        #properties-panel {
+            position: absolute;
+            top: 46px;
+            left: 10px;
+            min-width: 180px;
+            background: #2d2d2d;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 8px 10px;
+            z-index: 10;
+            font-family: sans-serif;
+            font-size: 13px;
+            color: #ccc;
+            display: none;
+        }
+
+        #properties-panel.visible {
+            display: block;
+        }
+
+        #properties-panel .prop-title {
+            font-weight: bold;
+            margin-bottom: 6px;
+            color: #fff;
+        }
+
+        #properties-panel label {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        #properties-panel input[type="number"] {
+            width: 70px;
+            padding: 2px 4px;
+            background: #1e1e1e;
+            border: 1px solid #555;
+            border-radius: 3px;
+            color: #ccc;
+            font-family: monospace;
+            font-size: 12px;
+            margin-left: 4px;
+        }
+
+        #properties-panel button {
+            margin-top: 8px;
+            padding: 4px 10px;
+            background: #6e1a1a;
+            color: #fff;
+            border: 1px solid #a33;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 12px;
+        }
+
+        #properties-panel button:hover {
+            background: #8b2222;
+        }
+    </style>
 </head>
 
 <body>
+    <div id="toolbar">
+        <button id="tool-point" data-tool="point">Point</button>
+        <button id="tool-line" data-tool="line">Line</button>
+        <button id="fit-all">Fit All</button>
+    </div>
+    <div id="properties-panel"></div>
+    <canvas id="solverCanvas"></canvas>
     <script type="module">
         import { main } from './solver.bundle.js';
-        main();
+        main(document.getElementById('solverCanvas'));
     </script>
 </body>
 

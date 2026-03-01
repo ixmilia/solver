@@ -17,6 +17,12 @@ export { HorizontalLine } from "./constraints/horizontal_line.js";
 export { VerticalLine } from "./constraints/vertical_line.js";
 export { HorizontalDistanceBetweenPoints } from "./constraints/horizontal_distance.js";
 export { VerticalDistanceBetweenPoints } from "./constraints/vertical_distance.js";
+export { Viewport } from "./viewport.js";
 
-export function main(): void {
+import { Viewport } from "./viewport.js";
+
+export function main(canvas?: HTMLCanvasElement): void {
+    if (canvas) {
+        new Viewport(canvas);
+    }
 }
