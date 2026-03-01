@@ -8,6 +8,7 @@ import { VerticalLine } from "./constraints/vertical_line.js";
 import { HorizontalDistanceBetweenPoints } from "./constraints/horizontal_distance.js";
 import { VerticalDistanceBetweenPoints } from "./constraints/vertical_distance.js";
 import { GradientBasedSolver } from "./gradient_based_solver.js";
+import { serializeSketchToString, deserializeSketchFromString } from "./sketch_serializer.js";
 
 /** The tools available in the toolbar. */
 export type Tool = "none" | "point" | "line";
@@ -148,6 +149,25 @@ export class Viewport {
         // Export DXF button
         document.getElementById("export-dxf")?.addEventListener("click", () => {
             this.exportDxf();
+        });
+
+        // Save sketch button
+        document.getElementById("save-sketch")?.addEventListener("click", () => {
+            this.saveSketch();
+        });
+
+        // Open sketch button + hidden file input
+        const fileInput = document.getElementById("open-file-input") as HTMLInputElement | null;
+        document.getElementById("open-sketch")?.addEventListener("click", () => {
+            fileInput?.click();
+        });
+        fileInput?.addEventListener("change", () => {
+            const file = fileInput.files?.[0];
+            if (!file) return;
+            file.text().then((text) => {
+                this.openSketch(text);
+                fileInput.value = ""; // allow re-opening the same file
+            });
         });
     }
 
@@ -689,21 +709,51 @@ export class Viewport {
         info.style.marginBottom = "4px";
         panel.appendChild(info);
 
+        const dx = line.end.x - line.start.x;
+        const dy = line.end.y - line.start.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const lengthDiv = document.createElement("div");
+        lengthDiv.textContent = `Length: ${this.formatValue(length)}`;
+        lengthDiv.style.marginBottom = "4px";
+        panel.appendChild(lengthDiv);
+
         // Check for existing HorizontalLine / VerticalLine constraint
         const constraints = this.sketch.getConstraintsOnPrimitive(line);
         const existingH = constraints.find((c): c is HorizontalLine => c instanceof HorizontalLine) ?? null;
         const existingV = constraints.find((c): c is VerticalLine => c instanceof VerticalLine) ?? null;
         const existingDirectional = existingH ?? existingV;
 
-        if (constraints.length > 0) {
+        // Find distance constraints whose two points match the line's start/end (in either order)
+        const matchesLineEndpoints = (c: HorizontalDistanceBetweenPoints | VerticalDistanceBetweenPoints): boolean => {
+            const refs = c.getReferencedPrimitives();
+            const [cp1, cp2] = refs;
+            return (cp1 === line.start && cp2 === line.end) || (cp1 === line.end && cp2 === line.start);
+        };
+
+        const allConstraints = this.sketch.getConstraints();
+        const existingHDist = allConstraints.find(
+            (c): c is HorizontalDistanceBetweenPoints =>
+                c instanceof HorizontalDistanceBetweenPoints && matchesLineEndpoints(c)
+        ) ?? null;
+        const existingVDist = allConstraints.find(
+            (c): c is VerticalDistanceBetweenPoints =>
+                c instanceof VerticalDistanceBetweenPoints && matchesLineEndpoints(c)
+        ) ?? null;
+
+        // Combine line-level and distance constraints for display
+        const allDisplayed: import("./interfaces.js").ConstraintLike[] = [...constraints];
+        if (existingHDist) allDisplayed.push(existingHDist);
+        if (existingVDist) allDisplayed.push(existingVDist);
+
+        if (allDisplayed.length > 0) {
             const section = document.createElement("div");
             section.className = "prop-constraints";
             const heading = document.createElement("div");
             heading.className = "prop-subtitle";
-            heading.textContent = `Constraints (${constraints.length})`;
+            heading.textContent = `Constraints (${allDisplayed.length})`;
             section.appendChild(heading);
             const list = document.createElement("ul");
-            for (const c of constraints) {
+            for (const c of allDisplayed) {
                 const li = document.createElement("li");
                 li.textContent = c.description;
                 list.appendChild(li);
@@ -712,22 +762,32 @@ export class Viewport {
             panel.appendChild(section);
         }
 
-        if (existingDirectional) {
-            // Allow deleting the existing constraint
+        // Delete buttons for existing constraints
+        const deletable = [existingDirectional, existingHDist, existingVDist].filter(Boolean) as import("./interfaces.js").ConstraintLike[];
+        if (deletable.length > 0) {
             const section = document.createElement("div");
             section.className = "prop-add-constraint";
-            const deleteBtn = document.createElement("button");
-            deleteBtn.textContent = `Delete ${existingDirectional.description}`;
-            deleteBtn.addEventListener("click", () => {
-                this.sketch.removeConstraint(existingDirectional);
-                this.isSolved = false;
-                this.updatePropertiesPanel();
-                this.draw();
-            });
-            section.appendChild(deleteBtn);
+            for (const c of deletable) {
+                const deleteBtn = document.createElement("button");
+                deleteBtn.textContent = `Delete ${c.description}`;
+                deleteBtn.addEventListener("click", () => {
+                    this.sketch.removeConstraint(c);
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                section.appendChild(deleteBtn);
+            }
             panel.appendChild(section);
-        } else {
-            // Allow adding HorizontalLine or VerticalLine
+        }
+
+        // Add constraint buttons
+        const canAddH = !existingDirectional;
+        const canAddV = !existingDirectional;
+        const canAddHDist = !existingHDist;
+        const canAddVDist = !existingVDist;
+
+        if (canAddH || canAddV || canAddHDist || canAddVDist) {
             const section = document.createElement("div");
             section.className = "prop-add-constraint";
             const heading = document.createElement("div");
@@ -735,25 +795,58 @@ export class Viewport {
             heading.textContent = "Add Constraint";
             section.appendChild(heading);
 
-            const addHBtn = document.createElement("button");
-            addHBtn.textContent = "Add HorizontalLine";
-            addHBtn.addEventListener("click", () => {
-                this.sketch.addConstraint(new HorizontalLine(line));
-                this.isSolved = false;
-                this.updatePropertiesPanel();
-                this.draw();
-            });
-            section.appendChild(addHBtn);
+            if (canAddH) {
+                const addHBtn = document.createElement("button");
+                addHBtn.textContent = "Add HorizontalLine";
+                addHBtn.addEventListener("click", () => {
+                    this.sketch.addConstraint(new HorizontalLine(line));
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                section.appendChild(addHBtn);
+            }
 
-            const addVBtn = document.createElement("button");
-            addVBtn.textContent = "Add VerticalLine";
-            addVBtn.addEventListener("click", () => {
-                this.sketch.addConstraint(new VerticalLine(line));
-                this.isSolved = false;
-                this.updatePropertiesPanel();
-                this.draw();
-            });
-            section.appendChild(addVBtn);
+            if (canAddV) {
+                const addVBtn = document.createElement("button");
+                addVBtn.textContent = "Add VerticalLine";
+                addVBtn.addEventListener("click", () => {
+                    this.sketch.addConstraint(new VerticalLine(line));
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                section.appendChild(addVBtn);
+            }
+
+            if (canAddHDist) {
+                const addHDistBtn = document.createElement("button");
+                addHDistBtn.textContent = "Add Horizontal Distance";
+                addHDistBtn.addEventListener("click", () => {
+                    const dist = parseFloat(prompt("Horizontal distance:", "1") ?? "");
+                    if (isNaN(dist)) return;
+                    this.sketch.addConstraint(new HorizontalDistanceBetweenPoints(line.start, line.end, dist));
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                section.appendChild(addHDistBtn);
+            }
+
+            if (canAddVDist) {
+                const addVDistBtn = document.createElement("button");
+                addVDistBtn.textContent = "Add Vertical Distance";
+                addVDistBtn.addEventListener("click", () => {
+                    const dist = parseFloat(prompt("Vertical distance:", "1") ?? "");
+                    if (isNaN(dist)) return;
+                    this.sketch.addConstraint(new VerticalDistanceBetweenPoints(line.start, line.end, dist));
+                    this.isSolved = false;
+                    this.updatePropertiesPanel();
+                    this.draw();
+                });
+                section.appendChild(addVDistBtn);
+            }
+
             panel.appendChild(section);
         }
 
@@ -977,6 +1070,34 @@ export class Viewport {
         a.download = "sketch.dxf";
         a.click();
         URL.revokeObjectURL(url);
+    }
+
+    /** Serialize the current sketch to JSON and trigger a file download. */
+    private saveSketch(): void {
+        const json = serializeSketchToString(this.sketch);
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "sketch.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    /** Load a sketch from a JSON string, replacing the current sketch. */
+    private openSketch(text: string): void {
+        try {
+            const restored = deserializeSketchFromString(text);
+            this.sketch = restored;
+            this.pendingLineStart = null;
+            this.pendingConstraint = null;
+            this.isSolved = false;
+            this.selectPrimitive(null);
+            this.zoomToFit();
+            this.showStatus("Sketch loaded");
+        } catch (e: any) {
+            this.showStatus(`Failed to open: ${e.message ?? e}`);
+        }
     }
 
     /** Draw a persistent solved/unsolved indicator in the top-right corner. */
